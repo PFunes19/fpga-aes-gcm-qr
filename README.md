@@ -21,8 +21,7 @@ ESP32 --Wi-Fi--> PC / iPhone muestran el resultado
 | `quartus/` | 17 archivos Verilog, `de10lite_top.sdc` y `pines_de10lite.tcl`. Entidad superior: `de10lite_top`. |
 | `simulacion/` | Bancos de prueba (Icarus Verilog / Active-HDL) y vectores OpenSSL. No van a Quartus. |
 | `esp32/` | Sketch de Arduino para ESP32 WROOM-32 y script de carga. |
-| `pc/` | `decrypt_qr.py`: descifra en la PC un texto leído del QR. |
-| `documentacion/` | Guías (LEEME), explicación del código y captura simulada del VGA. |
+| `documentacion/` | Guías (LEEME), captura simulada del VGA. |
 
 Empieza por `LEEME.txt` y `documentacion/LEEME_top.txt`.
 
