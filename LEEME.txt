@@ -1,0 +1,44 @@
+PROYECTO: AES-128-GCM + QR EN DE10-LITE, CON ESP32 E IPHONE
+
+  PC --Wi-Fi--> ESP32 --UART--> FPGA: cifra y muestra el QR por VGA
+  iPhone lee el QR --Wi-Fi--> ESP32 --UART--> FPGA: descifra
+  La PC muestra el resultado en el navegador.
+
+CARPETAS
+
+  quartus\         TODO lo que va al proyecto de Quartus:
+                   17 archivos .v + de10lite_top.sdc.
+                   Entidad superior: de10lite_top.
+                   LICENSE_qr_reference.txt debe acompanar a qr_matrix.v.
+
+  esp32\esp32_fpga_qr\   sketch de Arduino para la ESP32 WROOM-32
+                         (placa "ESP32 Dev Module"). Compila sin avisos.
+
+  pc\decrypt_qr.py       descifra en la PC un texto leido del QR, sin ESP32
+                         (python pc\decrypt_qr.py <texto>).
+
+  simulacion\      bancos de prueba (tb_*.v) y vectores. NO van a Quartus.
+
+  documentacion\   LEEME_top.txt    FPGA: archivos, pines, protocolo UART,
+                                    LEDs, conexion con la ESP32, simulacion.
+                   LEEME_esp32.txt  ESP32: Arduino IDE, Wi-Fi, carga, y como
+                                    armar el Atajo del iPhone.
+                   vga_frame_simulado.png  como se ve la pantalla (simulada).
+
+ORDEN SUGERIDO
+
+  1. Quartus: crear proyecto (10M50DAF484C7G), agregar quartus\*.v y el .sdc,
+     asignar pines (documentacion\LEEME_top.txt, seccion 2), compilar,
+     revisar recursos y Timing Analyzer, programar.
+  2. Probar con KEY1 y monitor VGA; escanear el QR con el celular.
+  3. ESP32: cargar el sketch, probarla sola (la pagina debe decir
+     "La FPGA no respondio"), luego cablear GPIO16/17 y GND.
+  4. Crear el Atajo del iPhone.
+
+ESTADO
+
+  Simulado y verificado: todo el RTL de la FPGA (cifrado, descifrado,
+  QR, VGA, UART).
+  Probado en la placa: compilacion en Quartus con el .sdc, ESP32 real por
+  UART (cifrar desde la pagina, descifrar OK / RECHAZADO).
+  Pendiente: QR en monitor VGA y lectura con el Atajo del iPhone.

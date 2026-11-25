@@ -1,0 +1,25 @@
+# Salidas de simulacion (Icarus / Active-HDL)
+simulacion/*_test
+simulacion/*.vvp
+simulacion/*.vcd
+simulacion/*.bmp
+simulacion/*.log
+
+# Quartus (si alguna vez se crea el proyecto aqui)
+db/
+incremental_db/
+output_files/
+*.qws
+*.rpt
+*.summary
+
+# Arduino
+esp32/**/build/
+
+# Python
+__pycache__/
+*.pyc
+
+# Sistema
+Thumbs.db
+desktop.ini

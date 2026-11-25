@@ -1,0 +1,116 @@
+ESP32 (WROOM-32): PUENTE WI-FI ENTRE PC / IPHONE Y LA FPGA
+
+Archivo: esp32\esp32_fpga_qr\esp32_fpga_qr.ino  (Arduino exige que la carpeta
+y el .ino tengan el mismo nombre; abrir la carpeta completa).
+
+  PC (navegador) --Wi-Fi--> ESP32 --UART 'E'--> FPGA: cifra y muestra el QR
+  iPhone (Atajo) lee el QR --Wi-Fi--> ESP32 --UART 'D'--> FPGA: descifra
+  La pagina abierta en la PC muestra cada resultado al momento.
+
+1. PREPARAR ARDUINO IDE (una sola vez)
+
+  a) Archivo > Preferencias > "URLs adicionales de gestor de placas":
+       https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  b) Herramientas > Placa > Gestor de placas: buscar "esp32" e instalar
+     "esp32 by Espressif Systems".
+  c) Herramientas > Placa: "ESP32 Dev Module".
+  d) Herramientas > Puerto: el COM que aparece al conectar la ESP32.
+     Si no aparece, instalar el driver USB del DevKit (CP210x o CH340,
+     segun el chip que tenga la placa).
+No hace falta instalar bibliotecas: WiFi, WebServer y ESPmDNS vienen
+con el paquete esp32.
+
+2. CONFIGURAR EL SKETCH (inicio del archivo)
+
+  Opcion A, red de tu casa/escuela (recomendada si es tuya):
+    WIFI_SSID = "nombre de la red";  WIFI_PASS = "clave";
+    La PC y el iPhone deben estar en esa misma red.
+    Las redes con portal de acceso o "aislamiento de clientes" (muchas
+    redes de universidades o de invitados) bloquean esta comunicacion.
+
+  Opcion B, red propia de la ESP32 (funciona en cualquier lugar):
+    dejar WIFI_SSID = "". La ESP32 crea la red "FPGA-QR", clave fpga1234.
+    Conectar la PC y el iPhone a esa red. iPhone avisara que no tiene
+    internet: elegir seguir conectado. La direccion es http://192.168.4.1
+    Si la opcion A falla durante 15 s, la ESP32 pasa sola a esta opcion.
+
+Cambiar AP_PASS si la demo se hace en un lugar publico.
+
+3. CARGAR Y PROBAR
+
+  a) Subir el sketch. Si se queda en "Connecting....", mantener pulsado el
+     boton BOOT de la ESP32 hasta que empiece a escribir.
+  b) Abrir el Monitor Serie a 115200: muestra la direccion, por ejemplo
+       Conectado. Abrir en la PC: http://192.168.1.57
+       Tambien: http://fpga-qr.local
+  c) En la PC abrir esa direccion. La pagina tiene:
+       1. Cifrar: escribir hasta 16 caracteres -> la FPGA muestra el QR.
+       2. Descifrar a mano (para probar sin iPhone).
+       Resultados: lista que se actualiza sola cada segundo.
+  Si http://fpga-qr.local no abre en Windows, usar la direccion numerica.
+
+Prueba sin FPGA: con GPIO16 y GPIO17 sin conectar, "Cifrar" debe decir
+"La FPGA no respondio" tras 1 s. Eso confirma que Wi-Fi y pagina funcionan.
+
+4. CONEXION CON LA FPGA
+
+  ESP32 GPIO16 (RX2)  <---  FPGA UART_TX
+  ESP32 GPIO17 (TX2)  --->  FPGA UART_RX
+  ESP32 GND           ----  FPGA GND
+Ambas a 3.3 V, sin convertidor. No usar los pines TX0/RX0 (GPIO1/GPIO3):
+son el USB del Monitor Serie. No conectar 5 V/VIN a una senal de la FPGA.
+La ESP32 puede alimentarse por su USB desde la PC mientras tanto.
+
+5. ATAJO DEL IPHONE ("Descifrar FPGA")
+
+En la app Atajos, tocar "+" y agregar estas acciones en orden:
+
+  1) "Escanear codigo QR o de barras"
+  2) "Obtener contenido de URL"
+       URL:     http://192.168.4.1/api/decrypt    (red propia FPGA-QR;
+                con la opcion A, la IP que imprime la ESP32 o
+                http://fpga-qr.local/api/decrypt)
+       Tocar la flecha/"Mostrar mas":
+       Metodo:  POST
+       Cuerpo de la solicitud: JSON
+       Agregar campo > Texto:  clave  text
+                               valor  la variable "Codigo QR" del paso 1
+  3) "Mostrar resultado"  (con "Contenido de URL")
+
+Nombre sugerido: "Descifrar FPGA". Se puede agregar a la pantalla de
+inicio o pedirlo a Siri. La primera vez, iOS pide permiso para conectarse
+a la red local / a esa direccion: permitir.
+
+Al ejecutarlo: apuntar al QR del monitor. El iPhone muestra
+  OK: Hola FPGA
+o bien
+  RECHAZADO: etiqueta GCM incorrecta (...)
+y el mismo resultado aparece en la pagina de la PC.
+
+Nombres en ingles si el iPhone esta en ingles: "Scan QR or Barcode",
+"Get Contents of URL" (Method POST, Request Body JSON), "Show Result".
+
+6. API (por si se quiere usar desde otro programa)
+
+  POST /api/encrypt   cuerpo: texto plano, o JSON {"text":"..."}
+      -> {"ok":true,"base64":"..."}     maximo 16 bytes; se rellena con
+         espacios. Los caracteres acentuados ocupan 2 bytes.
+  POST /api/decrypt   cuerpo: texto plano, JSON {"text":"..."} o form text=
+      -> texto: "OK: ...", "RECHAZADO: ..." o "ERROR: ..."
+         Acepta '\/' de JSON y recupera '+' convertidos en espacio.
+  GET  /api/events?since=N  -> eventos nuevos en JSON
+
+Ejemplo desde PowerShell en la PC:
+  Invoke-RestMethod -Method Post -Uri http://fpga-qr.local/api/encrypt -Body "Hola FPGA"
+
+7. LIMITES Y ESTADO
+
+  - Una solicitud a la vez (el servidor web las atiende en orden).
+  - Si alguien pulsa KEY1 en el mismo milisegundo en que la ESP32 pide
+    un cifrado, la ESP32 podria tomar el QR del boton como respuesta.
+  - Comunicacion HTTP sin cifrar dentro de la red local: el texto Base64
+    ya va cifrado, pero el mensaje que se escribe en "Cifrar" viaja en
+    claro de la PC a la ESP32 y el resultado "OK: ..." de vuelta.
+  - NO COMPILADO NI PROBADO: en esta maquina no esta instalado el paquete
+    esp32 de Arduino y no hay placa conectada. La parte de la FPGA si
+    esta simulada (tb_de10lite_uart con las mismas tramas).

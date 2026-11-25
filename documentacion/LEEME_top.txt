@@ -1,0 +1,153 @@
+TOP PARA LA DE10-LITE: de10lite_top
+
+Demostracion en la placa:
+  KEY1 o comando UART 'E' -> AES-128-GCM -> Base64 -> QR 33x33 -> VGA
+  comando UART 'D' (texto leido del QR) -> Base64 -> AES-GCM descifrado
+El texto Base64 sale tambien por UART para que la ESP32 lo reenvie.
+
+Flujo completo previsto:
+  PC --Wi-Fi--> ESP32 --'E'--> FPGA: cifra, muestra el QR, contesta 'C'
+  iPhone lee el QR --Wi-Fi--> ESP32 --'D'--> FPGA: descifra, contesta 'P'
+  ESP32 --Wi-Fi--> PC muestra el resultado
+El firmware de la ESP32 todavia no esta escrito.
+
+1. PROYECTO EN QUARTUS
+
+Dispositivo: MAX 10, 10M50DAF484C7G (DE10-Lite).
+Entidad de nivel superior: de10lite_top
+
+Agregar los 17 archivos Verilog de la carpeta quartus\ (son todos los .v
+que hay ahi):
+  de10lite_top.v, vga_qr_display.v
+  uart_command_port.v, uart_rx.v, uart_tx.v
+  crypto_qr_controller.v, crypto_decrypt_controller.v
+  aes_gcm.v, aes128_core.v, ghash.v, gf128_mult.v
+  base64_encode.v, base64_decode.v
+  qr_generator.v, qr_data_encode.v, qr_rs_encoder.v, qr_matrix.v
+Agregar tambien quartus\de10lite_top.sdc (Project > Add/Remove Files).
+Sin el, Quartus analiza con un reloj de 1 GHz y el reporte no sirve.
+
+RELOJ: la logica funciona a 25 MHz (50 MHz de la placa dividido entre 2
+por el registro clk_div). La primera compilacion mostro un camino de
+~29 ns: no cabe en 20 ns (50 MHz) pero si en 40 ns (25 MHz). El .sdc
+declara ese reloj como CLK25; en el Timing Analyzer, revisar que CLK25
+tenga slack positivo (Setup Summary, modelo Slow 1200mV 85C).
+NO agregar los tb_*.v de simulacion\.
+Conservar quartus\LICENSE_qr_reference.txt (qr_matrix adapta codigo MIT
+de Nayuki).
+
+2. PUERTOS PARA ASIGNAR PINES (estandar de E/S: 3.3-V LVTTL)
+
+  MAX10_CLK1_50     entrada   reloj de 50 MHz
+  KEY[1:0]          entrada   botones, activos en bajo
+  SW[9:0]           entrada   interruptores
+  LEDR[9:0]         salida
+  HEX0..HEX5[7:0]   salida    displays, activos en bajo; [7] = punto
+  VGA_R[3:0], VGA_G[3:0], VGA_B[3:0], VGA_HS, VGA_VS   salidas VGA
+  UART_RX           entrada   desde la ESP32 (un pin del GPIO o Arduino)
+  UART_TX           salida    hacia la ESP32
+
+87 pines en total; todos deben quedar asignados (Pin Planner o
+Assignment Editor) y con I/O Standard = 3.3-V LVTTL. Si no, Quartus los
+pone en pines al azar con 2.5 V: NO programar la placa en ese caso.
+Comprobar que al compilar NO aparezca "No exact pin location assignment".
+Recomendado: en el Assignment Editor, "Weak Pull-Up Resistor" = On para
+UART_RX. Asi, si la ESP32 no esta conectada, la linea queda en reposo (1)
+y no aparecen bytes falsos.
+
+3. CONEXION CON LA ESP32 (WROOM-32 DevKit)
+
+Usar UART2 de la ESP32, no UART0: UART0 es el USB del monitor serie y
+la ESP32 imprime mensajes por ahi al arrancar.
+
+  FPGA UART_TX  ------>  ESP32 GPIO16 (RX2)
+  FPGA UART_RX  <------  ESP32 GPIO17 (TX2)
+  FPGA GND      -------  ESP32 GND        (tierra comun obligatoria)
+
+Ambas trabajan a 3.3 V: conexion directa, sin convertidor de nivel.
+NO conectar el pin de 5 V ni VIN de la ESP32 a un pin de senal de la FPGA.
+Configuracion serie: 115200 baudios, 8 bits, sin paridad, 1 de parada.
+
+4. PROTOCOLO UART
+
+Solicitudes (ESP32 -> FPGA), bytes binarios sin separadores:
+  'E' + 16 bytes   cifrar esos 16 bytes (rellenar con espacios si el
+                   mensaje es mas corto) y mostrar su QR.       17 bytes
+  'D' + 60 bytes   descifrar ese texto Base64.                  61 bytes
+
+Respuestas (FPGA -> ESP32):
+  'C' + 60 bytes   Base64 del QR mostrado.                      61 bytes
+                   Tambien se envia al pulsar KEY1.
+  'P' + estado + 16 bytes   resultado del descifrado.           18 bytes
+        estado 'K' = etiqueta correcta; siguen los 16 bytes originales
+               'T' = etiqueta incorrecta (texto alterado o clave
+                     distinta); siguen 16 ceros
+               'B' = Base64 invalido; siguen 16 ceros
+
+Reglas:
+  - Una solicitud a la vez: esperar la respuesta antes de enviar otra.
+    Una trama completa que llega mientras la FPGA atiende otra se descarta.
+  - Un primer byte distinto de 'E' o 'D' se ignora.
+  - Si dentro de una trama pasan 50 ms sin bytes, se descarta y la FPGA
+    vuelve a esperar un comando. Enviar cada trama de una sola vez.
+  - Tiempos aproximados: 'E' -> 'C' unos 8 ms; 'D' -> 'P' unos 7 ms
+    (casi todo es transmision serie).
+  - El texto del QR debe enviarse tal cual: si pasa por un formulario
+    web, cuidar que '+' no se convierta en espacio.
+  - KEY1 se ignora mientras la FPGA atiende una solicitud o envia una
+    respuesta (unos milisegundos).
+
+5. USO EN LA PLACA
+
+  KEY0          reset (tambien hay reset automatico al encender).
+  KEY1          cifra "DE10-Lite SW=xyz" (xyz = SW en hex) y muestra su QR.
+  LEDR0         ocupado (operacion o respuesta UART en curso).
+  LEDR1         hay un QR valido en pantalla.
+  LEDR2         ultimo descifrado correcto.
+  LEDR3         ultimo descifrado rechazado: etiqueta incorrecta.
+  LEDR4         ultimo descifrado rechazado: Base64 invalido.
+  HEX3..HEX0    numero de mensaje (ultimos 4 digitos hex del nonce).
+  HEX5          mascara QR elegida (0 a 7).  Sin QR muestran '-'.
+
+Pantalla VGA 640x480 60 Hz: fondo azul oscuro y cuadro de 451x451 pixeles
+(33 modulos + 4 de margen, 11 pixeles por modulo). Gris sin QR; blanco
+con el codigo en negro despues de cifrar.
+
+Sin ESP32, para comprobar un QR en la PC:
+  python pc\decrypt_qr.py <texto leido del QR>
+
+6. CLAVE Y NONCE: SOLO DEMOSTRACION
+
+  Clave fija y publica: 000102030405060708090a0b0c0d0e0f (DEMO_KEY).
+  Nonce = de1011fe00000000 || contador de 32 bits.
+  El contador vuelve a 0 con reset o al apagar: entre encendidos se
+  REPITEN nonces con la misma clave, lo que rompe la seguridad de GCM.
+  La misma FPGA cifra y descifra con la misma clave: la demo muestra que
+  el camino funciona y que un texto alterado se rechaza, no protege datos.
+
+7. SIMULACION
+
+Con Icarus Verilog, desde la carpeta simulacion\ (en PowerShell):
+
+  Top, VGA y botones:
+    iverilog -g2012 -Wall -s tb_de10lite_top -o top_test (Get-ChildItem ..\quartus\*.v) tb_de10lite_top.v
+    vvp top_test +BMP=vga_frame.bmp
+  Protocolo UART completo (envia tramas bit a bit, como la ESP32):
+    iverilog -g2012 -Wall -s tb_de10lite_uart -o uart_test (Get-ChildItem ..\quartus\*.v) tb_de10lite_uart.v
+    vvp uart_test
+  Controlador de descifrado con vectores OpenSSL:
+    iverilog -g2012 -Wall -s tb_crypto_decrypt_controller -o dec_test (Get-ChildItem ..\quartus\*.v) tb_crypto_decrypt_controller.v
+    vvp dec_test +VECTORS=crypto_base64_vectors.txt
+Las dos primeras tardan unos 3 minutos cada una.
+
+Icarus avisa que uart_rx.v y uart_tx.v no declaran `timescale; es
+inofensivo y Quartus lo ignora.
+
+8. LO QUE NO SE HA VERIFICADO
+
+  - Primera compilacion en Quartus (21.1.1, 50 MHz, sin .sdc ni pines):
+    38,250 de 49,760 LE (77 %); tiempos NO cumplian 50 MHz. Se paso a
+    25 MHz; falta recompilar con el .sdc y los pines para confirmarlo.
+  - Funcionamiento en la placa, lectura del QR con el celular y conexion
+    real con la ESP32.
+  - Firmware de la ESP32 y Atajo del iPhone: pendientes.
