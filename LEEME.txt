@@ -14,9 +14,6 @@ CARPETAS
   esp32\esp32_fpga_qr\   sketch de Arduino para la ESP32 WROOM-32
                          (placa "ESP32 Dev Module"). Compila sin avisos.
 
-  pc\decrypt_qr.py       descifra en la PC un texto leido del QR, sin ESP32
-                         (python pc\decrypt_qr.py <texto>).
-
   simulacion\      bancos de prueba (tb_*.v) y vectores. NO van a Quartus.
 
   documentacion\   LEEME_top.txt    FPGA: archivos, pines, protocolo UART,
