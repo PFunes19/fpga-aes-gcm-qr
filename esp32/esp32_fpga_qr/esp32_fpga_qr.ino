@@ -8,6 +8,8 @@
 //   iPhone (Atajo) --POST /api/decrypt--> ESP32 --'D'+60--> FPGA
 //                                         ESP32 <--'P'+estado+16-- FPGA
 //   La pagina de la PC muestra todos los eventos (se actualiza sola).
+//   Opcional: el boton "Generar QR aqui" dibuja el mismo QR en la pagina
+//   (JavaScript en el navegador), por si no hay monitor VGA.
 //
 // Conexion (3.3 V en ambos lados, tierra comun):
 //   FPGA UART_TX -> GPIO16 (RX2)     FPGA UART_RX <- GPIO17 (TX2)
@@ -321,6 +323,12 @@ const char PAGE[] PROGMEM = R"HTML(<!doctype html>
  <textarea id="b64" placeholder="Texto Base64 de 60 caracteres"></textarea>
  <button id="dec">Descifrar</button>
  <div id="decOut" class="out"></div></section>
+<section><h2>3. Ver el QR en esta pagina (en vez de la pantalla VGA)</h2>
+ <div class="small">Usa el Base64 del cuadro de arriba (se llena solo al cifrar).</div>
+ <button id="qrBtn">Generar QR aqui</button>
+ <div id="qrOut" class="out"></div>
+ <canvas id="qr" width="328" height="328" style="display:none;margin-top:8px;image-rendering:pixelated"></canvas>
+ <div><a id="qrDl" download="qr_fpga.png" style="display:none">Descargar PNG</a></div></section>
 <section><h2>Resultados</h2>
  <div class="small">Se actualiza solo: aqui aparece lo que envia el iPhone.</div>
  <ul id="ev"></ul></section>
@@ -347,6 +355,79 @@ $('dec').onclick=async()=>{
   try{const r=await post('/api/decrypt',$('b64').value.trim());$('decOut').textContent=r.text;}
   catch(e){$('decOut').textContent='Error: '+e;}
   $('dec').disabled=false;
+};
+// QR version 4, nivel M, modo byte (hasta 62 bytes). Mismo perfil y mismo
+// algoritmo que qr_generator.v: da la misma matriz y la misma mascara.
+function qrMatrix(bytes){
+  const N=33,DATA=64,ECC=18;
+  if(bytes.length>62)throw 'Maximo 62 bytes para QR version 4-M';
+  // 1. Bits: modo byte (0100) + longitud (8 bits) + datos + terminador + relleno
+  const bits=[];const put=(v,n)=>{for(let i=n-1;i>=0;i--)bits.push((v>>>i)&1);};
+  put(4,4);put(bytes.length,8);for(const b of bytes)put(b,8);
+  put(0,Math.min(4,DATA*8-bits.length));while(bits.length%8)bits.push(0);
+  const data=[];for(let i=0;i<bits.length;i+=8){let v=0;for(let j=0;j<8;j++)v=(v<<1)|bits[i+j];data.push(v);}
+  for(let p=0xEC;data.length<DATA;p^=0xEC^0x11)data.push(p);
+  // 2. Reed-Solomon en GF(256), polinomio 0x11D: 2 bloques de 32 datos + 18 ECC
+  const mul=(x,y)=>{let z=0;for(let i=7;i>=0;i--){z=(z<<1)^((z>>>7)*0x11D);z^=((y>>>i)&1)*x;}return z;};
+  const gen=new Array(ECC).fill(0);gen[ECC-1]=1;
+  for(let i=0,r=1;i<ECC;i++,r=mul(r,2))for(let j=0;j<ECC;j++){gen[j]=mul(gen[j],r);if(j+1<ECC)gen[j]^=gen[j+1];}
+  const rs=blk=>{const res=new Array(ECC).fill(0);for(const b of blk){const f=b^res.shift();res.push(0);for(let i=0;i<ECC;i++)res[i]^=mul(gen[i],f);}return res;};
+  const b0=data.slice(0,32),b1=data.slice(32),e0=rs(b0),e1=rs(b1),cw=[];
+  for(let i=0;i<32;i++)cw.push(b0[i],b1[i]);for(let i=0;i<ECC;i++)cw.push(e0[i],e1[i]);
+  // 3. Patrones fijos (m[fila][col]); fn marca los modulos que no son datos
+  const m=[],fn=[];for(let y=0;y<N;y++){m.push(new Array(N).fill(0));fn.push(new Array(N).fill(false));}
+  const set=(x,y,v)=>{m[y][x]=v?1:0;fn[y][x]=true;};
+  for(let i=0;i<N;i++){set(6,i,i%2==0);set(i,6,i%2==0);}
+  for(const[cx,cy]of[[3,3],[N-4,3],[3,N-4]])
+    for(let dy=-4;dy<=4;dy++)for(let dx=-4;dx<=4;dx++){const x=cx+dx,y=cy+dy,d=Math.max(Math.abs(dx),Math.abs(dy));
+      if(x>=0&&x<N&&y>=0&&y<N)set(x,y,d!=2&&d!=4);}
+  for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++)set(26+dx,26+dy,Math.max(Math.abs(dx),Math.abs(dy))!=1);
+  const format=mask=>{const d=mask;let r=d;for(let i=0;i<10;i++)r=(r<<1)^((r>>>9)*0x537);
+    const f=((d<<10)|r)^0x5412,g=i=>(f>>>i)&1;
+    for(let i=0;i<=5;i++)set(8,i,g(i));set(8,7,g(6));set(8,8,g(7));set(7,8,g(8));
+    for(let i=9;i<15;i++)set(14-i,8,g(i));for(let i=0;i<8;i++)set(N-1-i,8,g(i));
+    for(let i=8;i<15;i++)set(8,N-15+i,g(i));set(8,N-8,1);};
+  format(0);
+  // 4. Datos en zigzag desde la esquina inferior derecha (se salta la columna 6)
+  let k=0;
+  for(let r=N-1;r>=1;r-=2){if(r==6)r=5;
+    for(let v=0;v<N;v++)for(let j=0;j<2;j++){const x=r-j,y=((r+1)&2)==0?N-1-v:v;
+      if(!fn[y][x]&&k<cw.length*8){m[y][x]=(cw[k>>>3]>>>(7-(k&7)))&1;k++;}}}
+  // 5. Mascara: se prueban las 8 y se queda la de menor penalizacion
+  const cond=(t,x,y)=>[(x+y)%2,y%2,x%3,(x+y)%3,(Math.floor(x/3)+Math.floor(y/2))%2,
+    x*y%2+x*y%3,(x*y%2+x*y%3)%2,((x+y)%2+x*y%3)%2][t]==0;
+  const apply=t=>{for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(!fn[y][x]&&cond(t,x,y))m[y][x]^=1;};
+  const penalty=()=>{let s=0;
+    const add=(len,h)=>{if(h[0]==0)len+=N;h.pop();h.unshift(len);};
+    const cnt=h=>{const n=h[1],c=n>0&&h[2]==n&&h[3]==n*3&&h[4]==n&&h[5]==n;
+      return(c&&h[0]>=n*4&&h[6]>=n?1:0)+(c&&h[6]>=n*4&&h[0]>=n?1:0);};
+    for(let p=0;p<2;p++)for(let a=0;a<N;a++){let col=0,run=0;const h=[0,0,0,0,0,0,0];
+      for(let b=0;b<N;b++){const v=p?m[b][a]:m[a][b];
+        if(v==col){run++;if(run==5)s+=3;else if(run>5)s++;}
+        else{add(run,h);if(!col)s+=cnt(h)*40;col=v;run=1;}}
+      if(col){add(run,h);run=0;}run+=N;add(run,h);s+=cnt(h)*40;}
+    let dark=0;
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++){dark+=m[y][x];
+      if(x<N-1&&y<N-1&&m[y][x]==m[y][x+1]&&m[y][x]==m[y+1][x]&&m[y][x]==m[y+1][x+1])s+=3;}
+    return s+(Math.ceil(Math.abs(dark*20-N*N*10)/(N*N))-1)*10;};
+  let best=0,bestP=1e9;
+  for(let t=0;t<8;t++){apply(t);format(t);const p=penalty();if(p<bestP){bestP=p;best=t;}apply(t);}
+  apply(best);format(best);
+  return {m:m,mask:best};
+}
+// Dibuja la matriz con margen blanco de 4 modulos, 8 pixeles por modulo
+$('qrBtn').onclick=()=>{
+  const s=$('b64').value.trim(),c=$('qr');
+  if(!s){$('qrOut').textContent='Primero cifra un mensaje (o pega un Base64 arriba)';return;}
+  try{
+    const q=qrMatrix(enc.encode(s)),S=8,Q=4,g=c.getContext('2d');
+    c.width=c.height=(33+2*Q)*S;
+    g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.fillStyle='#000';
+    for(let y=0;y<33;y++)for(let x=0;x<33;x++)if(q.m[y][x])g.fillRect((x+Q)*S,(y+Q)*S,S,S);
+    c.style.display='block';
+    $('qrDl').href=c.toDataURL('image/png');$('qrDl').style.display='inline-block';
+    $('qrOut').textContent='QR version 4-M, mascara '+q.mask+' ('+s.length+' caracteres)';
+  }catch(e){$('qrOut').textContent='Error: '+e;}
 };
 let last=0;
 async function poll(){
