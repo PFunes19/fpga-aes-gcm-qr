@@ -1,0 +1,34 @@
+{
+  "DESIGN_NAME": "asic_top",
+  "PDK": "sky130A",
+  "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+  "VERILOG_FILES": [
+    "dir::src/asic_top.v",
+    "dir::src/vga_qr_display.v",
+    "dir::src/uart_command_port.v",
+    "dir::src/uart_rx.v",
+    "dir::src/uart_tx.v",
+    "dir::src/crypto_qr_controller.v",
+    "dir::src/crypto_decrypt_controller.v",
+    "dir::src/aes_gcm.v",
+    "dir::src/aes128_core.v",
+    "dir::src/ghash.v",
+    "dir::src/gf128_mult.v",
+    "dir::src/base64_encode.v",
+    "dir::src/base64_decode.v",
+    "dir::src/qr_generator.v",
+    "dir::src/qr_data_encode.v",
+    "dir::src/qr_rs_encoder.v",
+    "dir::src/qr_matrix.v"
+  ],
+  "CLOCK_PORT": "clk",
+  "CLOCK_PERIOD": 40,
+
+  "FP_SIZING": "relative",
+  "FP_CORE_UTIL": 20,
+  "PL_TARGET_DENSITY": 0.30,
+  "GRT_ADJUSTMENT": 0.15,
+
+  "SYNTH_STRATEGY": "AREA 0",
+  "RUN_LINTER": false
+}
